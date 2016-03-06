@@ -1,5 +1,8 @@
 package net.chwthewke.valuellama
 
+import scala.annotation.tailrec
+import scalaz._, Scalaz._
+
 /**
  * Simple RNG by Bob Jenkins:
  *
@@ -24,8 +27,8 @@ sealed abstract class Seed {
 
   /** Reseed the RNG using the given Long value. */
   def reseed( n : Long ) : Seed = {
-    val n0 = ( ( n >>> 32 ) & 0xffffffff )
-    val n1 = ( n & 0xffffffff )
+    val n0 = ( n >>> 32 ) & 0xffffffff
+    val n1 = n & 0xffffffff
     var i = 0
     var seed : Seed = Seed( a ^ n0, b ^ n1, c, d )
     while ( i < 16 ) { seed = seed.next; i += 1 }
@@ -40,6 +43,42 @@ sealed abstract class Seed {
   def long : ( Seed, Long ) = ( next, d )
 
   /**
+   * Generates a long value in [origin; bound[
+   *
+   * @param origin the (inclusive) lower bound
+   * @param bound the (exclusive) upper bound
+   */
+  def long( origin : Long, bound : Long ) : ( Seed, Long ) = {
+    if ( origin < bound ) {
+      val range = bound - origin
+      val m = range - 1
+      if ( ( range & m ) == 0L ) longPowerOfTwo( origin, m )
+      else if ( range > 0L ) longRange( origin, range )
+      else longUnrepresentable( origin, bound )
+    } else long
+  }
+
+  private def longPowerOfTwo( origin : Long, mask : Long ) : ( Seed, Long ) =
+    long.map( r => r & mask + origin )
+
+  @tailrec
+  private def longRange( origin : Long, range : Long ) : ( Seed, Long ) = {
+    val ( nextSeed, r ) = long
+    val u = r >>> 1
+    val l = u % range
+    if ( u + ( range - 1 ) - l < 0L )
+      nextSeed.longRange( origin, range )
+    else
+      ( nextSeed, origin + l )
+  }
+
+  @tailrec
+  private def longUnrepresentable( origin : Long, bound : Long ) : ( Seed, Long ) = {
+    val ( nextSeed, r ) = long
+    if ( r >= origin && r < bound ) ( nextSeed, r ) else nextSeed.longUnrepresentable( origin, bound )
+  }
+
+  /**
    * Generates a Double value.
    *
    * The values will be uniformly distributed, and will be contained
@@ -50,7 +89,7 @@ sealed abstract class Seed {
 
 object Seed {
 
-  private case class apply( a : Long, b : Long, c : Long, d : Long ) extends Seed
+  private[valuellama] case class apply( a : Long, b : Long, c : Long, d : Long ) extends Seed
 
   /** Generate a deterministic seed. */
   def apply( s : Long ) : Seed = {
