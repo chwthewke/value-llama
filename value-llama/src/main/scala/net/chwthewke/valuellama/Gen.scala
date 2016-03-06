@@ -27,6 +27,7 @@ trait GenInstances extends GenFunctions0 {
 
       override def modify( f : S => S ) : Gen[S, Unit] = Gen( ( p, s ) => ( f( s ), ().point[Result] ) )
 
+      // TODO stack-safety
       override def bind[A, B]( fa : Gen[S, A] )( f : A => Gen[S, B] ) : Gen[S, B] =
         Gen( ( p, s ) => {
           val ( s1, r1 ) = fa.runGen( p, s )
@@ -47,6 +48,11 @@ trait GenInstances extends GenFunctions0 {
 }
 
 trait GenFunctions {
+
+  def long : Gen[GenState, Long] = zoom( GenState.seed )( stateGen( _.long ) )
+  def long( a : Long, b : Long ) : Gen[GenState, Long] = zoom( GenState.seed )( stateGen( _.long( a, b ) ) )
+  def double : Gen[GenState, Double] = zoom( GenState.seed )( stateGen( _.double ) )
+
   // TODO unapply?
   def stateGen[S, A]( st : S => ( S, A ) ) : Gen[S, A] = stateM[Gen[S, ?], S, A]( st )
 
@@ -56,9 +62,9 @@ trait GenFunctions {
       ( l.set( t1 )( s ), a )
     }
 
-  def long : Gen[GenState, Long] = zoom( GenState.seed )( stateGen( _.long ) )
-  def double : Gen[GenState, Double] = zoom( GenState.seed )( stateGen( _.double ) )
+  //    def distinct[A, B](g: Gen[GenState, A], d: A => B)(implicit B: Order[B]): Gen[GenState, A]
 
+  def retry[A]( g : Gen[GenState, A] ) : Gen[GenState, A] = ???
 }
 
 object Gen extends GenInstances with GenFunctions {
