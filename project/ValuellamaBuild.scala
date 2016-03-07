@@ -31,6 +31,15 @@ object ValuellamaBuild extends Build {
 
   }
 
+  object Console {
+    def imports = Seq(
+      "scalaz.{Lens => _, Optional => _, _}, Scalaz._",
+      "monocle._, Monocle._",
+      "net.chwthewke.valuellama._" )
+      .map( "import " + _ )
+      .mkString( "\n" )
+  }
+
   override def settings = super.settings ++ Seq(
     addCompilerPlugin( "org.spire-math" %% "kind-projector" % "0.7.1" cross CrossVersion.binary ) )
 
@@ -79,9 +88,7 @@ object ValuellamaBuild extends Build {
     settings = valuellamaSettings ++
       Seq(
         name := "value-llama",
-        mainClass := Some( "net.chwthewke.valuellama.Main" ),
-        initialCommands := """|import net.chwthewke.valuellama._
-                              |import scalaz._,Scalaz._""".stripMargin,
+        initialCommands := Console.imports,
         buildInfoObject := "ValuellamaBuildInfo"
       )
   )
