@@ -1,6 +1,9 @@
 package net.chwthewke.valuellama
 
 import monocle._, Monocle._
+import scala.collection.generic.CanBuildFrom
+import scala.annotation.tailrec
+import scala.language.higherKinds
 import scalaz.{ Lens => _, _ }, Scalaz._
 import scalaz.syntax.isEmpty.ToIsEmptyOps
 
@@ -18,7 +21,7 @@ trait GenFunctions0 {
 trait GenInstances extends GenFunctions0 {
 
   implicit def GenInstance[S] : MonadState[Gen[S, ?], S] with MonadPlus[Gen[S, ?]] =
-    new MonadState[Gen[S, ?], S] with MonadPlus[Gen[S, ?]] {
+    new MonadState[Gen[S, ?], S] with MonadPlus[Gen[S, ?]] with BindRec[Gen[S, ?]] {
       override def init : Gen[S, S] = Gen( ( p, s ) => ( s, s.point[Result] ) )
 
       override def get : Gen[S, S] = init
@@ -43,6 +46,18 @@ trait GenInstances extends GenFunctions0 {
         } )
 
       override def point[A]( a : => A ) : Gen[S, A] = constResult( a.point[Result] )
+
+      override def tailrecM[A, B]( f : A => Gen[S, A \/ B] )( a : A ) : Gen[S, B] = Gen { ( p, s ) =>
+        @tailrec
+        def go( s : S, a : A ) : ( S, Result[B] ) =
+          f( a ).runGen( p, s ) match {
+            case ( s, Result( None ) )             => ( s, Result( None ) )
+            case ( s, Result( Some( \/-( b ) ) ) ) => ( s, Result( Some( b ) ) )
+            case ( s, Result( Some( -\/( a ) ) ) ) => go( s, a )
+          }
+
+        go( s, a )
+      }
     }
 
 }
@@ -62,11 +77,47 @@ trait GenFunctions {
       ( l.set( t1 )( s ), a )
     }
 
+  def xmapState[S, T, A]( g : Gen[S, A] )( f : S => T, b : T => S ) : Gen[T, A] =
+    Gen { ( p, t ) =>
+      val ( s, ra ) = g.runGen( p, b( t ) )
+      ( f( s ), ra )
+    }
+
   //    def distinct[A, B](g: Gen[GenState, A], d: A => B)(implicit B: Order[B]): Gen[GenState, A]
 
   def retry[A]( g : Gen[GenState, A] ) : Gen[GenState, A] = ???
+
+  trait Buildable[E, T] {
+    def builder : scala.collection.mutable.Builder[E, T]
+  }
+
+  object Buildable {
+    implicit def buildableCanBuildFrom[F, E, T]( implicit cbf : CanBuildFrom[F, E, T] ) : Buildable[E, T] =
+      new Buildable[E, T] { override def builder = cbf.apply }
+  }
+
+  private def container[C[_], A]( size : Int, g : Gen[GenState, A] )(
+    implicit b : Buildable[A, C[A]] ) : Gen[GenState, C[A]] = {
+    Gen { ( p, s ) =>
+      import scala.collection.mutable.Builder
+
+      def loop( rem : Int, b : Builder[A, C[A]], s1 : GenState ) : ( GenState, C[A] ) =
+        if ( rem == 0 ) ( s1, b.result )
+        else {
+          val ( s2, a ) = g.runGen( p, s1 )
+          loop( rem - 1, b += a.value.get, s2 ) // TODO temporary, obvs
+        }
+
+      loop( size, b.builder, s ).map( _.pure[Result] )
+    }
+  }
 }
 
 object Gen extends GenInstances with GenFunctions {
+  implicit class GenOps[A]( val self : Gen[GenState, A] ) {
+    def eval( p : GenParams ) : Result[A] =
+      self.runGen( p, GenState( Seed.random, 0 ) )._2
+  }
+
   def apply[S, A]( r : ( GenParams, S ) => ( S, Result[A] ) ) = new Gen( r )
 }

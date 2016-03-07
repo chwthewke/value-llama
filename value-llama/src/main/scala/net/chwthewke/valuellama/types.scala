@@ -23,6 +23,10 @@ object GenParams {
 class Result[+A]( val value : Option[A] ) extends AnyVal
 
 object Result {
+  def apply[A]( a : Option[A] ) : Result[A] = new Result( a )
+
+  def unapply[A]( r : Result[A] ) : Option[Option[A]] = Some( r.value )
+
   def option[A] : Iso[Result[A], Option[A]] = Iso.apply[Result[A], Option[A]]( _.value )( new Result( _ ) )
 
   def value[A] : Prism[Result[A], A] = option.composePrism( monocle.std.option.some )
