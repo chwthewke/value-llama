@@ -9,7 +9,7 @@ import scalaz.syntax.isEmpty.ToIsEmptyOps
 
 import MonadStateSyntax._
 
-class Gen[S, A]( val runGen : ( GenParams, S ) => ( S, Result[A] ) ) extends AnyVal
+class Gen[S, +A]( val runGen : ( GenParams, S ) => ( S, Result[A] ) ) extends AnyVal
 
 trait GenFunctions0 {
 
@@ -20,7 +20,7 @@ trait GenFunctions0 {
 
 trait GenInstances extends GenFunctions0 {
 
-  implicit def GenInstance[S] : MonadState[Gen[S, ?], S] with MonadPlus[Gen[S, ?]] =
+  implicit def GenInstance[S] : MonadState[Gen[S, ?], S] with MonadPlus[Gen[S, ?]] with BindRec[Gen[S, ?]] =
     new MonadState[Gen[S, ?], S] with MonadPlus[Gen[S, ?]] with BindRec[Gen[S, ?]] {
       override def init : Gen[S, S] = Gen( ( p, s ) => ( s, s.point[Result] ) )
 
@@ -71,19 +71,16 @@ trait GenFunctions {
   // TODO unapply?
   def stateGen[S, A]( st : S => ( S, A ) ) : Gen[S, A] = stateM[Gen[S, ?], S, A]( st )
 
-  def zoom[S, T, A]( l : Lens[S, T] )( g : Gen[T, A] ) : Gen[S, A] =
-    Gen { ( p, s ) =>
-      val ( t1, a ) = g.runGen( p, l.get( s ) )
-      ( l.set( t1 )( s ), a )
-    }
+  def withState[S, A]( g : S => Gen[S, A] ) : Gen[S, A] = MonadState[Gen[S, ?], S].get.flatMap( g )
 
-  def xmapState[S, T, A]( g : Gen[S, A] )( f : S => T, b : T => S ) : Gen[T, A] =
+  def xmapState[S, T, A]( g : Gen[S, A] )( b : T => S, f : S => T ) : Gen[T, A] =
     Gen { ( p, t ) =>
       val ( s, ra ) = g.runGen( p, b( t ) )
       ( f( s ), ra )
     }
 
-  //    def distinct[A, B](g: Gen[GenState, A], d: A => B)(implicit B: Order[B]): Gen[GenState, A]
+  def zoom[S, T, A]( l : Lens[T, S] )( g : Gen[S, A] ) : Gen[T, A] =
+    withState( t => xmapState( g )( l.get, l.set( _ )( t ) ) )
 
   def retry[A]( g : Gen[GenState, A] ) : Gen[GenState, A] = ???
 
@@ -96,20 +93,18 @@ trait GenFunctions {
       new Buildable[E, T] { override def builder = cbf.apply }
   }
 
+  // TODO not convinced this is stack-safe
   private def container[C[_], A]( size : Int, g : Gen[GenState, A] )(
     implicit b : Buildable[A, C[A]] ) : Gen[GenState, C[A]] = {
-    Gen { ( p, s ) =>
-      import scala.collection.mutable.Builder
 
-      def loop( rem : Int, b : Builder[A, C[A]], s1 : GenState ) : ( GenState, C[A] ) =
-        if ( rem == 0 ) ( s1, b.result )
-        else {
-          val ( s2, a ) = g.runGen( p, s1 )
-          loop( rem - 1, b += a.value.get, s2 ) // TODO temporary, obvs
-        }
+    import scala.collection.mutable.Builder
 
-      loop( size, b.builder, s ).map( _.pure[Result] )
+    def stepC( rem : Int, b : Builder[A, C[A]] ) : Gen[GenState, ( Int, Builder[A, C[A]] ) \/ C[A]] = {
+      if ( rem == 0 ) \/-( b.result ).pure[Gen[GenState, ?]]
+      else g.map( a => -\/( ( rem - 1, b += a ) ) )
     }
+
+    BindRec[Gen[GenState, ?]].tailrecM( ( stepC _ ).tupled )( ( size, b.builder ) )
   }
 }
 
