@@ -62,16 +62,42 @@ trait GenInstances extends GenFunctions0 {
 
 }
 
-trait GenFunctions {
+trait StateFunctions extends GenInstances {
+
+  @inline
+  private def M[S] : MonadState[Gen[S, ?], S] = MonadState[Gen[S, ?], S]
+
+  def get[S] : Gen[S, S] = M.get
+
+  def gets[S, A]( f : S => A ) : Gen[S, A] = M[S].map( M[S].get )( f )
+
+  def put[S]( s : S ) : Gen[S, Unit] = M.put( s )
+
+  def modify[S]( f : S => S ) : Gen[S, Unit] = M.modify( f )
+}
+
+trait GenFunctions extends StateFunctions {
 
   def long : Gen[GenState, Long] = zoom( GenState.seed )( stateGen( _.long ) )
   def long( a : Long, b : Long ) : Gen[GenState, Long] = zoom( GenState.seed )( stateGen( _.long( a, b ) ) )
+
+  def int : Gen[GenState, Int] = long.map( _.toInt )
+  def int( a : Int, b : Int ) : Gen[GenState, Int] = long( a, b ).map( _.toInt )
+
   def double : Gen[GenState, Double] = zoom( GenState.seed )( stateGen( _.double ) )
 
-  // TODO unapply?
+  private def withParams[S, A]( g : GenParams => Gen[S, A] ) : Gen[S, A] =
+    Monad[Gen[S, ?]].bind( Gen( ( p, s ) => ( s, p.pure[Result] ) ) )( g )
+
+  def sized[S, A]( g : Int => Gen[S, A] ) : Gen[S, A] =
+    withParams( g compose ( _.size ) )
+
+  // TODO TC-driven function -> Gen
+  // (p =>)? (s =>)? (s?, a/Result[a]) ~> Gen
+
   def stateGen[S, A]( st : S => ( S, A ) ) : Gen[S, A] = stateM[Gen[S, ?], S, A]( st )
 
-  def withState[S, A]( g : S => Gen[S, A] ) : Gen[S, A] = MonadState[Gen[S, ?], S].get.flatMap( g )
+  def withState[S, A]( g : S => Gen[S, A] ) : Gen[S, A] = get[S].flatMap( g )
 
   def xmapState[S, T, A]( g : Gen[S, A] )( b : T => S, f : S => T ) : Gen[T, A] =
     Gen { ( p, t ) =>
@@ -93,8 +119,8 @@ trait GenFunctions {
       new Buildable[E, T] { override def builder = cbf.apply }
   }
 
-  // TODO not convinced this is stack-safe
-  private def container[C[_], A]( size : Int, g : Gen[GenState, A] )(
+  // NOTE actually stack-safe \o/
+  def containerN[C[_], A]( size : Int, g : Gen[GenState, A] )(
     implicit b : Buildable[A, C[A]] ) : Gen[GenState, C[A]] = {
 
     import scala.collection.mutable.Builder
@@ -106,6 +132,14 @@ trait GenFunctions {
 
     BindRec[Gen[GenState, ?]].tailrecM( ( stepC _ ).tupled )( ( size, b.builder ) )
   }
+
+  def container[C[_], A]( g : Gen[GenState, A] )(
+    implicit b : Buildable[A, C[A]] ) : Gen[GenState, C[A]] =
+    sized( n => int( 0, n ).flatMap( containerN[C, A]( _, g ) ) )
+
+  def container1[C[_], A]( g : Gen[GenState, A] )(
+    implicit b : Buildable[A, C[A]] ) : Gen[GenState, C[A]] =
+    sized( n => int( 1, n max 1 ).flatMap( containerN[C, A]( _, g ) ) )
 }
 
 object Gen extends GenInstances with GenFunctions {

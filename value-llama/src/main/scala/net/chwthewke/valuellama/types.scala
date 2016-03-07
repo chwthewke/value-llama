@@ -20,7 +20,9 @@ object GenParams {
   val maxFailures : Lens[GenParams, Int] = GenLens[GenParams]( _.maxFailures )
 }
 
-class Result[+A]( val value : Option[A] ) extends AnyVal
+class Result[+A]( val value : Option[A] ) extends AnyVal {
+  override def toString = s"Result($value)"
+}
 
 object Result {
   def apply[A]( a : Option[A] ) : Result[A] = new Result( a )
