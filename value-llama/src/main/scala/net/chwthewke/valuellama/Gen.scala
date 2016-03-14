@@ -74,7 +74,41 @@ trait GenFunctions {
   def zoom[S, T, A]( l : Lens[T, S] )( g : Gen[S, A] ) : Gen[T, A] =
     withState( t => xmapState( g )( l.get, l.set( _ )( t ) ) )
 
-  def retry[A]( g : Gen[GenState, A] ) : Gen[GenState, A] = ???
+  // TODO reuse this
+  def mapResult[S, A, B]( g : Gen[S, A] )( f : ( ( S, GenFailure \/ A ) ) => ( S, GenFailure \/ B ) ) : Gen[S, B] =
+    Gen( ( p, s ) => f( g.runGen( p, s ) ) )
+
+  def disMap[S, A, B]( f : GenFailure \/ A => GenFailure \/ B, g : Gen[S, A] ) : Gen[S, B] =
+    mapResult( g )( ( identity[S] _ ) *** f )
+
+  def asDisjunction[S, A]( g : Gen[S, A] ) : Gen[S, GenFailure \/ A] =
+    disMap( ( fa : GenFailure \/ A ) => \/-( fa ), g )
+
+  def fromDisjunction[S, A]( g : Gen[S, GenFailure \/ A] ) : Gen[S, A] =
+    Gen( ( p, s ) => g.runGen( p, s ).map( _.join ) )
+
+  def filter[S, A]( p : A => Boolean, g : Gen[S, A] ) : Gen[S, A] =
+    disMap( ( fa : GenFailure \/ A ) => fa.flatMap( a => if ( p( a ) ) \/-( a ) else -\/( FilterFailed ) ), g )
+
+  def orElse[S, A]( g : Gen[S, A], h : => Gen[S, A] ) : Gen[S, A] =
+    Gen( ( p, s ) => g.runGen( p, s ) match {
+      case ( _, -\/( _ ) ) => h.runGen( p, s )
+      case ok              => ok
+    } )
+
+  def retry[A]( g : Gen[GenState, A] ) : Gen[GenState, A] = {
+    val retrying = Gen[GenState, A]( ( p, s ) => {
+      val ( s1, a ) = g.runGen( p, s )
+      ( GenState.failures.modify( _ + 1 )( s1 ), a )
+    } )
+
+    def inner( retries : Int ) : Gen[GenState, Int \/ ( GenFailure \/ A )] = ???
+    //      asDisjunction(g).flatMap {
+    //        case -\/(f) => if
+    //      }
+
+    fromDisjunction( BindRec[Gen[GenState, ?]].tailrecM( inner )( ??? ) )
+  }
 
   trait Buildable[E, T] {
     def builder : scala.collection.mutable.Builder[E, T]
